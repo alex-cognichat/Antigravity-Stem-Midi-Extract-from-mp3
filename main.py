@@ -132,17 +132,30 @@ def get_demucs_settings(device_info):
         
     return settings
 
+def get_next_versioned_path(base_path: Path, name: str) -> Path:
+    """
+    Returns a Path that doesn't exist yet, appending _1, _2, etc.
+    e.g. Stems/Song, Stems/Song_1, Stems/Song_2
+    """
+    candidate = base_path / name
+    if not candidate.exists():
+        return candidate
+    
+    i = 1
+    while True:
+        candidate = base_path / f"{name}_{i}"
+        if not candidate.exists():
+            return candidate
+        i += 1
+
 # --- Processing Functions ---
 
 def separate_stems(file_path, settings):
     """Run Demucs separation."""
     song_name = file_path.stem
-    output_dir = config.STEMS_DIR / song_name
+    output_dir = get_next_versioned_path(config.STEMS_DIR, song_name)
     
-    # Skip if done
-    if output_dir.exists() and any(output_dir.iterdir()):
-        logger.info(f"Skipping stem separation for {song_name} (output exists)")
-        return output_dir
+    logger.info(f"Separating stems for: {song_name} -> {output_dir.name}")
     
     logger.info(f"Separating stems for: {song_name}...")
     
@@ -186,6 +199,7 @@ def separate_stems(file_path, settings):
     raw_output_path = config.STEMS_DIR / settings["model"] / song_name
     
     if raw_output_path.exists():
+        # Even if output_dir exists (unlikely given get_next_versioned_path), we overwrite or move
         if output_dir.exists():
             shutil.rmtree(output_dir)
         shutil.move(str(raw_output_path), str(output_dir))
@@ -284,14 +298,22 @@ def main():
     print("=========================================\n")
     
     # 3. Find Files
-    files = [
-        f for f in config.SOURCE_DIR.iterdir() 
-        if f.suffix.lower() in config.AUDIO_EXTENSIONS
-    ]
+    # 3. Find Files
+    files = []
+    if config.SOURCE_DIR.exists():
+        files = [
+            f for f in config.SOURCE_DIR.iterdir() 
+            if f.suffix.lower() in config.AUDIO_EXTENSIONS
+        ]
     
     if not files:
-        print(f"❌ No audio files found in {config.SOURCE_DIR}")
-        print("   Please add .mp3, .wav, or .flac files to the Source folder.")
+        print("\n" + "="*50)
+        print("🚦 READY TO START!")
+        print("="*50)
+        print(f"1. Open the '{config.SOURCE_DIR.name}' folder: {config.SOURCE_DIR}")
+        print("2. Drop your audio files there (.mp3, .wav, .flac)")
+        print("3. Run this script again")
+        print("="*50 + "\n")
         return
         
     print(f"Found {len(files)} songs to process.\n")
@@ -304,9 +326,11 @@ def main():
         stems_dir = separate_stems(file_path, settings)
         
         # B. MIDI Conversion
+        # B. MIDI Conversion
         if stems_dir:
-            convert_melodic_to_midi(stems_dir, file_path.stem)
-            convert_drums_to_midi(stems_dir, file_path.stem)
+            # Pass the folder name of stems_dir to match Midi folder versioning
+            convert_melodic_to_midi(stems_dir, stems_dir.name)
+            convert_drums_to_midi(stems_dir, stems_dir.name)
             
     print("\n✨ All Done! Check Stems/ and Midi/ directories.")
 
