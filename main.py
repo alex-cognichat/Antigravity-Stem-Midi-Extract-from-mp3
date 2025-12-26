@@ -215,17 +215,68 @@ def separate_stems(file_path, settings):
         logger.error(f"Could not find expected output at {raw_output_path}")
         return None
 
+def stem_has_content(wav_path: Path, silence_threshold_db: float = -40.0) -> bool:
+    """
+    Analyze a stem to determine if it has meaningful audio content.
+    Returns False if the stem is mostly silence (e.g., guitar stem with no guitar).
+    
+    Args:
+        wav_path: Path to the WAV file
+        silence_threshold_db: dB threshold below which audio is considered silence
+    """
+    try:
+        import librosa
+        import numpy as np
+        
+        # Load audio
+        y, sr = librosa.load(str(wav_path), sr=None, mono=True)
+        
+        # Calculate RMS energy
+        rms = librosa.feature.rms(y=y)[0]
+        
+        # Convert to dB
+        rms_db = librosa.amplitude_to_db(rms, ref=np.max)
+        
+        # Calculate percentage of frames above threshold
+        active_frames = np.sum(rms_db > silence_threshold_db)
+        total_frames = len(rms_db)
+        
+        if total_frames == 0:
+            return False
+            
+        active_ratio = active_frames / total_frames
+        
+        # If less than 5% of frames have content, consider it empty
+        has_content = active_ratio > 0.05
+        
+        if not has_content:
+            logger.info(f"  ⏭ Skipping {wav_path.stem} (no significant content detected)")
+        
+        return has_content
+        
+    except Exception as e:
+        # If analysis fails, assume there's content to be safe
+        logger.warning(f"Could not analyze {wav_path.name}: {e}")
+        return True
+
 def convert_melodic_to_midi(stems_dir, song_name):
-    """Convert melodic stems (vocals, bass, etc.) to MIDI using Basic Pitch."""
+    """Convert melodic stems (vocals, bass, etc.) to MIDI using Basic Pitch.
+    Only converts stems that have meaningful audio content."""
     from basic_pitch.inference import predict_and_save
     from basic_pitch import ICASSP_2022_MODEL_PATH
     
     midi_song_dir = config.MIDI_DIR / song_name
     midi_song_dir.mkdir(parents=True, exist_ok=True)
     
+    converted_count = 0
+    
     for stem in config.MELODIC_STEMS:
         wav_path = stems_dir / f"{stem}.wav"
         if not wav_path.exists():
+            continue
+        
+        # Check if stem has actual content (skip empty stems like guitar in synth tracks)
+        if not stem_has_content(wav_path):
             continue
             
         # Check if MIDI already exists
@@ -247,8 +298,12 @@ def convert_melodic_to_midi(stems_dir, song_name):
                 model_or_model_path=ICASSP_2022_MODEL_PATH,
             )
             logger.info(f"  ✓ Created {stem}_basic_pitch.mid")
+            converted_count += 1
         except Exception as e:
             logger.error(f"Failed to convert {stem} to midi: {e}")
+    
+    if converted_count == 0:
+        logger.info("  No melodic stems with content found for MIDI conversion")
 
 def convert_drums_to_midi(stems_dir, song_name):
     """Convert drums to MIDI using BeatNet (if available/installed)."""
